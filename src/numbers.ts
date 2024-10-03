@@ -7,10 +7,6 @@ export type Index = number;
 
 export namespace Numbers {
 
-  export function toBE64Uint8Array(n: number, size=8): Uint8Array {
-    return new Uint8Array(toBE64(n, size));
-  }
-
   export function toBE64(n: number, size=8): Buffer {
     if (size < 8)
       throw new Error('size minumum is 8');
@@ -26,30 +22,31 @@ export namespace Numbers {
     dv.setBigUint64(at, b, false);
   }
 
-  export function fromBE64(buf: Uint8Array, byteLength = 8): number|BigInt {
-    const dv = new DataView(buf.buffer);
+  export function fromBE64(buf: Uint8Array, offset=0, byteLength:number|undefined=undefined): number {
+
+    byteLength = byteLength ?? buf.byteLength;
+    //const dv = new DataView(buf.buffer, offset, buf.byteLength < byteLength ? buf.byteLength : byteLength);
+    const view = new DataView(buf.buffer, offset, byteLength);
     switch (byteLength) {
-      case 1:
-        return dv.getUint8(0);
-      case 2:
-        return dv.getUint16(0, false);
-      case 4:
-        return dv.getUint32(0, false);
-      case 8:
-        return dv.getBigUint64(0, false);
-      default:
-        throw new Error('Unsupported byte length');
+        case 1:
+            return view.getUint8(0);
+        case 2:
+            return view.getUint16(0, false); // Big-endian
+        case 4:
+            return view.getUint32(0, false); // Big-endian
+        case 8:
+            const value = view.getBigUint64(0, false); // Big-endian
+            if (value > Number.MAX_SAFE_INTEGER)
+                throw new Error('Number exceeds MAX_SAFE_INTEGER');
+            return Number(value);
+        default:
+            throw new Error('Unsupported byte length');
     }
-  }
-  export function numberFromBE(buf: Buffer, byteLength = 4): number {
-    if (byteLength === 8) {
-      return Number(fromBE64(buf, byteLength));
-    }
-    return fromBE64(buf, byteLength) as number;
   }
 
+  /*
   export function numberToBytes(num: number, byteLength = 8): Uint8Array {
-    // return hex2Bytes(numberToHex(num));
+    // return hex2Bytes(toHex(num));
     const buffer = new ArrayBuffer(byteLength);
     const view = new DataView(buffer);
 
@@ -71,9 +68,9 @@ export namespace Numbers {
             throw new Error('Unsupported byte length');
     }
     return new Uint8Array(buffer);
-  }
+  }*/
 
-  export function numberToHex(num: number, includePrefix: boolean = false): string {
+  export function toHex(num: number, includePrefix: boolean = false): string {
     // Convert the number to a hexadecimal string
     let hexString = num.toString(16);
 

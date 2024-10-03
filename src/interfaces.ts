@@ -50,8 +50,10 @@ export interface ITileStorageProvider {
 }
 
 export interface ITileStore {
-  /** Retrieves the current head tile, creating a new one if the most recent is full */
-  head(): Promise<ILeafAdder>;
+  /** Retrieves the current head tile, creating a new one if the most recent is full
+   * @returns {[ILeafAdder, number]} the leaf adder and the version (etag) of the tile
+   */
+  head(): [ILeafAdder, number];
 
   /** Creates a new tile, optionally extending an existing tile by propagating the ancsetor peaks.
    * The new tile is not committed to storage until the commit method is called.
@@ -59,6 +61,7 @@ export interface ITileStore {
   create(parent?: ILeafAdder): ILeafAdder;
 
   /** Attempts to commit the extended tile, underlying storage may reject this
-   * based on optimistic consistency primitives. */
-  commit(t: ILeafAccessor): Promise<void>;
+   * based on optimistic consistency primitives.
+   * @param {number} version an etag like version for the tile when it was read from storage */
+  commit(t: ILeafAccessor, version: number|undefined): void;
 }

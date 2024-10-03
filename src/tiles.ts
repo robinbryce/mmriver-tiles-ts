@@ -3,8 +3,10 @@
 import { ILeafAccessor, ILeafAdder, ITileStorageProvider, ITileStore } from "./interfaces.js";
 import { Index } from "./numbers.js";
 import { LogField } from "./logvalue.js";
+import { Numbers } from "./numbers.js";
+import { EmptyError } from "./storage/errors.js";
 
-import { peaks, index_height, mmr_index, ones, trailing_zeros64, leaf_count } from "./algorithms.js";
+import { peaks, index_height, mmr_index, ones, trailing_zeros64 } from "./algorithms.js";
 
 
 export class TileLog {
@@ -20,14 +22,17 @@ export class TileLog {
      * Guarantees that all entries are added or none are.
      * @returns the mmr indices of the added records
      */
-    async append(leaves: LogField[]): Promise<Index[]> {
+    append(leaves: LogField[]): Index[] {
 
       let adder: ILeafAdder;
+      let version: number | undefined;
       try {
-        adder = await this.store.head();
+        [adder, version] = this.store.head();
       } catch (error) {
-        if (error instanceof TileFullError)
-          adder = await this.store.create();
+        if (error instanceof TileFullError || error instanceof EmptyError) {
+          adder = this.store.create();
+          version = undefined;
+        }
         else
           throw error;
       }
@@ -41,9 +46,10 @@ export class TileLog {
           if (error instanceof TileFullError) {
             // First commit the tile we just filled,
             // if the commit raises, everything is rolled back
-            await this.store.commit(adder);
+            this.store.commit(adder, version);
 
-            adder = await this.store.create(adder);
+            adder = this.store.create(adder);
+            version = undefined;
           }
           else
             throw error; // rethrow other errors
@@ -52,7 +58,7 @@ export class TileLog {
 
       // We always have an adder to commit at this point
 
-      await this.store.commit(adder);
+      this.store.commit(adder, version);
       return indices
     }
 }
@@ -72,16 +78,22 @@ export class TileStore {
     this.cfg = cfg;
     this.store = cfg.storage;
   }
-  async head(): Promise<ILeafAdder> {
-    throw new Error('Method not implemented.');
+  head(): [ILeafAdder, number] {
+    const [data, version] = this.store.read_head();
+    return [Tile.load(this.cfg, data), version];
   }
   /** Creates a new tile, optionally extending an existing tile by propagating the ancsetor peaks. */
-  create(parent?: ILeafAdder): ILeafAdder{
+  create(parent?: Tile): Tile{
     return Tile.create(this.cfg, parent);
   };
 
-  async commit(t :ILeafAccessor): Promise<void> {
-    throw new Error('Method not implemented.');
+  commit(tile :Tile, version: number|undefined= undefined): void {
+    // crop the data
+    const data = tile.data.subarray(0, tile.used_bytes());
+    if (typeof version === 'undefined')
+      this.store.create_tile(tile.id, data);
+    else
+      this.store.replace_tile(tile.id, version, data);
   }
 }
 
@@ -96,68 +108,104 @@ export class TileFullError extends Error {
 export class Tile {
 
     cfg: TileFormat;
+    id: Index = 0;
     firstIndex: Index  = 0;
     lastIndex: Index = 0;
     ancestorPeaks: Record<Index, LogField> = {};
 
-    // Organised as an array of 32 byte generic records. The first record stores
-    // the first mmr index stored in the tile and a version tag. A fixed number
-    // of records are reserved to maintain the ancestor peaks committing the
-    // preceding tiles.
+    // Organised as an array of fieldSize (default 32) byte generic records. The
+    // first record stores the tile id and the configured tile height for the
+    // log.  A fixed number of records are reserved to maintain the ancestor
+    // peaks committing the preceding tiles. An inclusion proof for any leaf
+    // will reference only data for the tile it resides in.
     data: Buffer;
 
-    constructor(cfg: TileFormat, data: Buffer, firstIndex: Index, lastIndex: Index) {
+    constructor(cfg: TileFormat, data: Buffer, id: Index, lastIndex: Index|undefined=undefined) {
 
-      if (data.byteLength > cfg.maxTileDataSize)
-        throw new Error('Tile data too large');
+      const firstIndex = mmr_index(id * (1 << cfg.tileHeight));
+
+      // To allow the data to be allocated once and trimmed when persisted, we don't compute this based on data.byteLength
+      lastIndex = lastIndex ?? firstIndex;
+
+      if (lastIndex < firstIndex)
+        throw new Error('lastIndex is before the current tile data');
 
       this.cfg = cfg;
       this.data = data;
+      this.id = id;
       this.firstIndex = firstIndex;
       this.lastIndex = lastIndex;
       if (this.firstIndex > 0)
         this.ancestorPeaks = this.read_ancestor_peaks_map();
     }
 
+    append(v: LogField): Index {
+
+      const i = this.lastIndex + 1;
+      if (i >= this.firstIndex + (1 << this.cfg.tileHeight))
+        throw new TileFullError();
+      this.write_field(i, v);
+      this.lastIndex = i;
+      return this.lastIndex + 1; // return the index for the *next* leaf
+    }
+
+    get(i: Index): LogField {
+      if (i < this.firstIndex) {
+        if (i in this.ancestorPeaks)
+          return this.ancestorPeaks[i];
+        throw new Error('Node index out of bounds');
+      }
+      return this.read_index(i);
+    }
+
     // creates a new Tile which is empty and which optionally follows a 'parent' tile
     static create(cfg: TileFormat, parent?: Tile): Tile {
 
-      // for convenience, over allocate the buffer to accomodate the maximum possible tile size.
-      // trim if/when it is persisted. we do have enough information here to
-      // calculate the exact max size should that proof worthwhile.
-      const data = Buffer.alloc(cfg.maxTileDataSize); // XXX max_tile_size
+      const tileid = parent ? parent.id + 1 : 0;
+
+      // for convenience, allocate the buffer to the size required once all leaves have been added. 
+      // trim if/when it is persisted.
+      const data = Buffer.alloc(Tiles.max_tile_size(cfg, tileid));
       if (!parent) {
         // Initiaising a log, the tile will have id zero and a firstIndex of zero.
         // We don't commit it to storage until after we add leaves. This
         // guarantees that tiles exist and are non empty or do not exist at all.
-        return new Tile(cfg, data, 0, 0);
+        return new Tile(cfg, data, 0);
       }
 
-      const firstIndex = parent.last_index() + 1;
 
-      // The first index is always persisted in the first field of the log tile.
-      data.writeBigInt64BE(BigInt(firstIndex), cfg.fieldWidth-8);
+      Tiles.write_start_field(cfg, data, tileid);
 
-      // propagate the retained peak from the parent to the new tile, adding the last parent node to the stack as we go.
+      // propagate the retained peak from the parent to the new tile, adding the
+      // last parent node to the stack as we go.
       data.set(parent.next_peak_stack(), cfg.peaksStart);
 
       // The new tile is initialy empty of nodes
-      return new Tile(cfg, data, firstIndex, firstIndex);
+      return new Tile(cfg, data, tileid);
     }
 
+    // loads a tile from a buffer, the lastIndex is calculated from the data size
     static load(cfg: TileFormat, data: Buffer): Tile {
 
-      // Read back the persisted start index
-      const big = data.subarray(cfg.fieldWidth-8, cfg.fieldWidth).readBigInt64BE();
-      if (big > Number.MAX_SAFE_INTEGER)
-        throw new Error('uint64 support tbd');
-      const firstIndex = Number(big);
+      const [tileHeight, tileid] = Tiles.read_start_field(cfg, data);
+
+      // It is perfectly reasonable to re-configure a log tile height at any
+      // time, though the need to do so is likely rare. This can be accomplished
+      // safely and  *hot*. The seals cover the nodes not the raw file content,
+      // so the seals remain valid even for re-configured logs. From the
+      // perspective of the log, all tiles are the same height, even if they are
+      // not available yet for the new config.  Here we check that the expected
+      // config matches the tile data we just read.
+      if (cfg.tileHeight !== tileHeight)
+        throw new Error('Tile height mismatch');
+
+      const firstIndex = mmr_index(tileid * (1 << cfg.tileHeight));
 
       // Compute the last index based on the data size. When tiles are persisted
       // by this implementation we crop the byte array to the last node.
       const lastIndex = firstIndex + ((data.byteLength - cfg.nodesStart) / cfg.fieldWidth) - 1;
 
-      return new Tile(cfg, data, firstIndex, lastIndex);
+      return new Tile(cfg, data, tileid, lastIndex);
     }
 
     last_index(): Index {
@@ -179,18 +227,12 @@ export class Tile {
       // work with the whole mmr are applied to the tile ids. Essentially
       // treating them as leaf indices in a smaller mmr.
 
-      // first index, because the peak stack in this tile is the ancestor peaks
-      // from the previous.  Note that if this is the first tile, the peak stack
-      // is empty and the arithmetc works regardles.
-      const totalLeaves = leaf_count(this.lastIndex);
-      const nextTile = (totalLeaves / this.cfg.leafCount);
-
       // The ones count for the current tile id is the peak count carried over from the previous.
+      const peakCount  = ones(this.id);
       // The trailing zeros of the *one* based tile number is the number of peaks we can
       // discard from the stack for next tile, and this - slightly confusingly -
       // is also the next tile index.
-      const peakCount  = ones(nextTile-1);
-      const popCount = trailing_zeros64(nextTile);
+      const popCount = trailing_zeros64(this.id+1);
 
       // take all the peaks we don't pop, but over allocate by adding back space for a single addition.
       let peaks =  this.data.subarray(
@@ -254,6 +296,10 @@ export class Tile {
         offset + i * this.cfg.fieldWidth,
         offset + (i+1) * this.cfg.fieldWidth);
     }
+
+    write_field(i: Index, v: LogField, offset: number = 0): void {
+      this.data.set(v as Uint8Array, offset + i * this.cfg.fieldWidth);
+    }
 }
 
 export type TileFormat = {
@@ -269,7 +315,30 @@ export type TileFormat = {
   storage: ITileStorageProvider;
 }
 
+export type TypeTileStartField = {
+  tileHeight: number;
+  tileid: number;
+  firstIndex: number;
+}
+
 export namespace Tiles {
+
+  export function write_start_field(cfg: TileFormat, data: Buffer, tileid: number) {
+    // NOTE: it should be able to do something with cbor short types here and
+    // still maintain the field alignment. having a type 2 long value, whose
+    // payload just happens to be the log, as the last value could work too, but
+    // it would have to be set on persist when the tile size is known.
+    const field = data.subarray(0, cfg.fieldWidth);
+    Numbers.setBE64(cfg.tileHeight, cfg.fieldWidth-16, field);
+    Numbers.setBE64(tileid, cfg.fieldWidth-8, field);
+  }
+
+  export function read_start_field(cfg: TileFormat, data: Buffer): [number, number] {
+    const field = data.subarray(0, cfg.fieldWidth);
+    const tileHeight = Numbers.fromBE64(field, cfg.fieldWidth-16, 8);
+    const tileid = Numbers.fromBE64(field, cfg.fieldWidth-8, 8);
+    return [tileHeight, tileid];
+  }
 
   export function max_tile_size(fmt: TileFormat, tileid: number): number {
     // there are more efficient ways to compute this, done this way for clarity.

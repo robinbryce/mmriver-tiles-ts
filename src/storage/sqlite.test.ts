@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { SQLite } from './sqlite.ts';
-import { ExistsError, ChangedError } from './errors';
+import { ExistsError, ChangedError } from './errors.ts';
 
 describe('SQLite Database with Optimistic Concurrency Control', () => {
 

@@ -30,15 +30,23 @@ describe('Tile', () => {
   it('Should create a tile with the expected firstIndex', () => {
       const cfg = cfg_default({});
       const data = Buffer.alloc(cfg.maxTileDataSize);
-      set_start(data, cfg, 123);
+      Tiles.write_start_field(cfg, data, 456);
+      const [g, id] = Tiles.read_start_field(cfg, data);
+      expect(g).toBe(14);
+      expect(id).toBe(456);
+
       const tile = Tile.load(cfg, data);
-      expect(tile.firstIndex).toBe(123);
+
+      expect(tile.id).toBe(456);
+      const indexOfFirstLeaf = mmr_index(tile.id * cfg.leafCount)
+      expect(tile.firstIndex).toBe(indexOfFirstLeaf);
     });
 
   it('Should maintain the correct peak stacks for height 2 second tile', () => {
     const cfg = cfg_default({tile_height:1});
     // pre-allocate exactly the right number of nodes for tile id 0
     const data0 = Buffer.alloc(Tiles.max_tile_size(cfg, 0));
+    Tiles.write_start_field(cfg, data0, 0);
     // populate each node with a value which is also its index.
     set_node(data0, cfg, 0, 0);
     set_node(data0, cfg, 1, 1);
@@ -50,7 +58,7 @@ describe('Tile', () => {
     expect(get_peak(t1.data, 0, cfg)).toEqual(NUM_FIELD(2));
   });	
 
-  it('Should maintain the correct peak stacks for four height 2 tiles', () => {
+  it('Should maintain the correct peak stacks for five height 2 tiles', () => {
 
     // Typically the tiles would be a lot larger, but this is the smallest tile
     // size which can excersise the corner cases in the propagation of the
@@ -59,6 +67,7 @@ describe('Tile', () => {
     const cfg = cfg_default({tile_height:1});
     // pre-allocate exactly the right number of nodes for tile id 0
     const data0 = Buffer.alloc(Tiles.max_tile_size(cfg, 0));
+    Tiles.write_start_field(cfg, data0, 0);
     // populate each node with a value which is also its index.
     set_node(data0, cfg, 0, 0);
     set_node(data0, cfg, 1, 1);
@@ -170,10 +179,6 @@ function cfg_default({tile_height = 14, hash_size = 32}): TileFormat {
 // Set a number in the indexed buffer field. the value will be in the least significant bits of the field.
 function set_number(data: Buffer, base: number, index: number, value: number, size: number = 32) {
   data.writeBigInt64BE(BigInt(value), base + (index+1)*size - 8);
-}
-
-function set_start(data: Buffer, cfg: TileFormat, value: number) {
-  set_number(data, 0, 0, value, cfg.fieldWidth);
 }
 
 /*
