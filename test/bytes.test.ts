@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { hex2bytes } from './hexbytes.js';
+import { hex2bytes } from '../src/bytes.js';
 
 describe('hex2Bytes', () => {
   it('should convert a hex string to a Uint8Array', () => {

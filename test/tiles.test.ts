@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { ITileStorageProvider } from './interfaces.js';
-import { Tile, TileFormat, Tiles } from './tiles.js';
-import { mmr_index } from './algorithms.js';
+import { ITileStorageProvider } from '../src/interfaces.js';
+import { Tile, TileFormat, Tiles } from '../src/tiles.js';
+import { mmr_index } from '../src/algorithms.js';
 import { Buffer } from 'buffer';
-import { Numbers } from './numbers.js';
+import { Numbers } from '../src/bytes.js';
 
  /* log structure for the height 2 tests. a regular mmr would have a larger tile height, 14 is 16k leaves/tile
 

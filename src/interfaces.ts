@@ -1,5 +1,6 @@
-import { Index } from "./numbers.js";
-
+// NOTICE: js ECM-262 5th edition permits all binary operators on number up to 2^53-1
+// The draft is defined for 2^64-1.
+export type Index = number;
 
 export type Hasher = (content: Uint8Array) => Uint8Array;
 
@@ -22,7 +23,7 @@ export interface ITileNodeAccessor extends INodeAccesosor {
  * 
  * tile id's
  *  
- *  for a merkle mountain range based log the tile id is just leaf_count(mmr_index) / leaves per tile.
+ *  for a merkle mountain range based log the tile id is just floor(leaf_count(mmr_index) / leaves per tile).
  *  Leaves per tile is just 2^tile_height (As This implementation works with zero based tile heights).
  *  For an mmr, tiles are just sections of a linear array.
  *  The strict append only nature of an MMR makes it possible to change the

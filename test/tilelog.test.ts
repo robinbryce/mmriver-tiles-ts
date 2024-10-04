@@ -1,13 +1,14 @@
 import { describe, it, expect } from 'vitest';
-import { ITileStorageProvider } from './interfaces.ts';
-import { TileLog, Tile, TileLogParameters } from './tiles.ts';
-import { TileStorageProvider } from './storage/sqlite.js';
-import { Numbers } from './numbers.ts';
-import { sha256 } from './hashing.ts';
-import { mmr_index, inclusion_proof_path, included_root, complete_mmr } from './algorithms.ts';
+import { ITileStorageProvider } from '../src/interfaces.ts';
+import { TileLog, Tile, TileLogParameters } from '../src/tiles.ts';
+import { TileStorageProvider } from '../src/storage/sqlite.js';
+import { Numbers } from '../src/bytes.ts';
+import { sha256 } from '../src/hashing.ts';
+import {
+  mmr_index, peaks, inclusion_proof_path, included_root, complete_mmr,
+  consistency_proof_paths, consistent_roots } from '../src/algorithms.ts';
 
-import { kat39_nodes, kat39_leaves, kat39_included_roots} from '../test/kat39.ts';
-import exp from 'constants';
+import { kat39_nodes, kat39_leaves, kat39_included_roots} from './kat39.ts';
 
 describe('TileLog append tests', () => {
   it('Should build a height 2, five tile log correctly one leaf at a time', () => {
@@ -85,8 +86,8 @@ describe('TileLog append tests', () => {
   });
 });
 
-describe('TileLog inclusion proofs', () => {
-  it('Should prove all nodes for all kat39 complete mmrs', ()=>{
+describe('TileLog proofs', () => {
+  it('Should prove inclusion for all nodes for all kat39 complete mmrs', ()=>{
     const storage = new TileStorageProvider(':memory:');
     const cfg = cfg_default({tile_height:1}, storage);
     const log = new TileLog(cfg);
@@ -112,6 +113,32 @@ describe('TileLog inclusion proofs', () => {
       expect(jkat39Root).toBe(kat39_included_roots[iw].length);
     }
   })
+  it('Should prove consistency between all kat39 complete mmrs', ()=>{
+
+    const storage = new TileStorageProvider(':memory:');
+    const cfg = cfg_default({tile_height:1}, storage);
+    const log = new TileLog(cfg);
+    log.append(kat39_leaves);
+
+    let ifrom = 0;
+    let ito = complete_mmr(ifrom+1);
+    while (ifrom < 39){
+
+      ifrom = complete_mmr(ifrom+1);
+      while(ito < 39) {
+
+        const proof: Uint8Array[][] = consistency_proof_paths(ifrom, ito).map((path) => path.map((sibling) => log.get(sibling)));
+        const accumulatorfrom: Uint8Array[] = peaks(ifrom).map((i) => log.get(i));
+        const accumulatorto: Uint8Array[] = peaks(ito).map((i) => new Uint8Array(log.get(i)));
+        const proven: Uint8Array[] = consistent_roots(log.cfg.hash_function, ifrom, accumulatorfrom, proof).map((r) => new Uint8Array(r));
+        expect(proven.length).toBeGreaterThan(0);
+        expect(proven.length).toBeLessThanOrEqual(accumulatorto.length);
+        expect(proven).toEqual(accumulatorto.slice(0, proven.length));
+
+        ito = complete_mmr(ito+1);
+      }
+    }
+  });
 });
 
 function cfg_default({tile_height = 14, hash_size = 32}, storage: ITileStorageProvider): TileLogParameters {

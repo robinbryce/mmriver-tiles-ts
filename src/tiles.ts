@@ -1,12 +1,11 @@
 // An approximation of the tiles interface defined for rfc9162
 //
-import { INodeAccesosor, ILeafAdder, ITileStorageProvider, ITileStore } from "./interfaces.js";
-import { Index } from "./numbers.js";
-import { Numbers } from "./numbers.js";
+import { Index, INodeAccesosor, ILeafAdder, ITileStorageProvider, ITileStore } from "./interfaces.js";
+import { Numbers } from "./bytes.js";
 import { EmptyError, MMRIndexRangeError } from "./storage/errors.js";
 
 import {
-  add_leaf_hash, peaks, index_height, mmr_index, ones, trailing_zeros64, leaf_count, complete_mmr
+  add_leaf_hash, peaks, index_height, mmr_index, ones, trailing_zeros64, leaf_count
 } from "./algorithms.js";
 
 export class TileLog {

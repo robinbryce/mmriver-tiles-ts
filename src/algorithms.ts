@@ -1,9 +1,7 @@
 // The algorithms corresponding to the MMRIVER draft
 
-import { ILeafAdder, Hasher } from "./interfaces.js";
-import { Index } from "./numbers.js";
-import { concat_bytes } from "./bytes.js"
-import { Numbers } from "./numbers.js";
+import { Index, ILeafAdder, Hasher  } from "./interfaces.js";
+import { concat_bytes, Numbers } from "./bytes.js"
 
 /**
  * Adds the leaf hash value f to the MMR
@@ -342,14 +340,6 @@ export function mmr_index(e: Index): Index {
     return sum
 }
 
-/** Returns the number of nodes above and to the left of i.
- * Assuming that i is a leaf. This is also the number of previous peak nodes
- * burried as a consequence of adding the leaf.
- */
-export function height_leaft(i: Index): Index {
-  return bit_length(i) - 1
-}
-
 /**
  * Returns the first complete mmr index which contains i
  * A complete mmr index is defined as the first left sibling node above or equal to i.
@@ -366,5 +356,36 @@ export function complete_mmr(i: Index): Index {
 	}
 
 	return i
+}
+
+/**
+ * Returns the mmr index of the peak root containing `i` in MMR(c)
+ * 
+ * @param i - The mmr index for the element of interest
+ * @param c - The identifying last index of the MMR state containing i
+ */
+export function accumulator_root(i: Index, c: Index): Index {
+    let s = c + 1
+
+    let peaksize = (1 << bit_length(s)) - 1
+    let r = 0
+    while (peaksize > 0) {
+      // If the next peak size exceeds the size identifying the accumulator, it
+      // is not included in the accumulator.
+      if (r + peaksize > s) {
+          peaksize >>= 1
+          continue
+      }
+
+      // The first peak that surpasses i, without exceeding s, is the root for i
+      if (r + peaksize > i)
+          return r + peaksize - 1
+
+      r += peaksize
+
+      peaksize >>= 1
+    }
+
+    return r
 }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { Numbers } from './numbers';
+import { Numbers } from '../src/bytes.js';
 
 describe('Numbers.setBE', () => {
   it('should set the Big Endian value correctly at the specified position', () => {

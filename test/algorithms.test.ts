@@ -1,9 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { index_height, peaks, add_leaf_hash, mmr_index, complete_mmr } from './algorithms.js';
-import { bit_length, trailing_zeros64 } from './algorithms.js';
-import { ILeafAdder } from './interfaces.js';
-import { Index } from './numbers.js';
-import { sha256 } from './hashing.js';
+import { index_height, peaks, add_leaf_hash, mmr_index, complete_mmr } from '../src/algorithms.js';
+import { bit_length, trailing_zeros64 } from '../src/algorithms.js';
+import { Index, ILeafAdder } from '../src/interfaces.js';
+import { sha256 } from '../src/hashing.js';
 
 import {
   kat39_leaves,
