@@ -1,4 +1,4 @@
-import { hex2bytes } from '../src/bytes.js';
+import { hex2bytes } from './bytes.js';
 
 /** the kat39 test tree.
  

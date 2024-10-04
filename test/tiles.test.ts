@@ -161,16 +161,16 @@ describe('max_tile_size', () => {
 });
 
 export class NotImplementedTileStorageProvider implements ITileStorageProvider {
-  read_tile(tileid: number): [Buffer, number] { throw new Error('not implemented');}
+  read_tile(_tileid: number): [Buffer, number] { throw new Error('not implemented');}
   read_head(): [Buffer, number] { throw new Error('not implemented');}
-  create_tile(tileid: number, data: Buffer) { throw new Error('not implemented');}
-  replace_tile(tileid: number, version: number, data: Buffer) { throw new Error('not implemented');}
+  create_tile(_tileid: number, _data: Buffer) { throw new Error('not implemented');}
+  replace_tile(_tileid: number, _version: number, _data: Buffer) { throw new Error('not implemented');}
 }
 
 function cfg_default({tile_height = 14, hash_size = 32}): TileFormat {
   return Tiles.format({
     tile_height, hash_size,
-    hash_function: (bytes: Uint8Array): Buffer => {throw new Error('not implemented');},
+    hash_function: (_bytes: Uint8Array): Buffer => {throw new Error('not implemented');},
     storage: new NotImplementedTileStorageProvider()
  });
 }

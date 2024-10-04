@@ -1,14 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { ITileStorageProvider } from '../src/interfaces.ts';
-import { TileLog, Tile, TileLogParameters } from '../src/tiles.ts';
+import { ITileStorageProvider } from '../src/interfaces.js';
+import { TileLog, Tile, TileLogParameters } from '../src/tiles.js';
 import { TileStorageProvider } from '../src/storage/sqlite.js';
-import { Numbers } from '../src/bytes.ts';
+import { Numbers, hex2bytes } from '../src/bytes.ts';
 import { sha256 } from '../src/hashing.ts';
 import {
   mmr_index, peaks, inclusion_proof_path, included_root, complete_mmr,
-  consistency_proof_paths, consistent_roots } from '../src/algorithms.ts';
+  consistency_proof_paths, consistent_roots, 
+  bytes_equal} from '../src/algorithms.ts';
 
-import { kat39_nodes, kat39_leaves, kat39_included_roots} from './kat39.ts';
+import { kat39_nodes, kat39_leaves, kat39_included_roots} from '../src/kat39.ts';
 
 describe('TileLog append tests', () => {
   it('Should build a height 2, five tile log correctly one leaf at a time', () => {
@@ -139,7 +140,24 @@ describe('TileLog proofs', () => {
       }
     }
   });
+  it('Should show the example works', () => {
+    const storage = new TileStorageProvider(':memory:');
+
+    // tile_height would typically be around 12-15, 1 matches the tests and results in a log whose tiles each contain 2 leaves.
+    const params = {tile_height: 1, hash_size: 32, hash_function: sha256, storage};
+    const log = new TileLog(params);
+
+    log.append(kat39_leaves); // canonical Known Answer Test leaves
+
+    // leaf 2 is mmr index 3, getting the proof for MMR(15) to MMR(25) will always produce the peak at 14
+
+    const proof: Uint8Array[] = inclusion_proof_path(2, 15).map((i) => log.get(i));
+    const root = new Uint8Array(included_root(log.cfg.hash_function, 2, log.get(2), proof));
+    if (!bytes_equal(root, hex2bytes("78b2b4162eb2c58b229288bbcb5b7d97c7a1154eed3161905fb0f180eba6f112")))
+      throw new Error("inclusion proof failed");
+  });
 });
+
 
 function cfg_default({tile_height = 14, hash_size = 32}, storage: ITileStorageProvider): TileLogParameters {
   return {

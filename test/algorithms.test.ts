@@ -11,12 +11,12 @@ import {
   kat39_mmr_index_of_leaf,
   kat39_peak_indices_map,
   kat39_complete_mmr_indices,
-} from '../test/kat39.js';
+} from '../src/kat39.js';
 
 class LeafAdder implements ILeafAdder {
   nodes: (Uint8Array & {length: 32})[] = [];
 
-  append_leaf(v: Uint8Array): Index {
+  append_leaf(_: Uint8Array): Index {
     throw new Error('Method not implemented.');
   }
   append(node: Uint8Array & {length: 32}): number {
