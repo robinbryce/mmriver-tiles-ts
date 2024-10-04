@@ -1,3 +1,9 @@
+export class MMRIndexRangeError extends Error {
+  constructor(message: string = 'The MMRIndex is not found (and is not an ancestors entry') {
+    super(message);
+    this.name = 'MMRIndexRangeError';
+  }
+}
 export class EmptyError extends Error {
   constructor(message: string = 'No tiles found') {
     super(message);

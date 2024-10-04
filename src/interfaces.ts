@@ -1,18 +1,20 @@
 import { Index } from "./numbers.js";
-import { LogField } from "./logvalue.js";
 
 
 export type Hasher = (content: Uint8Array) => Uint8Array;
 
-export interface ILeafAccessor {
+export interface INodeAccesosor {
   // Retrieves the requested node value if available, this includes the peak nodes committing the ancestor tiles.
   get(i: Index): any;
-  // // The start of the node values relative to data()
-  // first(): Index; 
-  // data(): LogField[];
 }
-export interface ILeafAdder extends ILeafAccessor{
-  append(v: LogField): Index;
+export interface ILeafAdder extends INodeAccesosor{
+  /** apends a leaf using the add_leaf_hash algorithm, which in turn invokes append on the implementation */
+  append_leaf(v: Uint8Array): Index;
+  append(v: Uint8Array): Index;
+}
+
+export interface ITileNodeAccessor extends INodeAccesosor {
+  has_ancestor(i: Index): boolean;
 }
 
 /**
@@ -21,12 +23,12 @@ export interface ILeafAdder extends ILeafAccessor{
  * tile id's
  *  
  *  for a merkle mountain range based log the tile id is just leaf_count(mmr_index) / leaves per tile.
- *  Leaves per tile is just 2^(tile_height-1.
+ *  Leaves per tile is just 2^tile_height (As This implementation works with zero based tile heights).
  *  For an mmr, tiles are just sections of a linear array.
- *  The strict append only nature of an MMR makse it possible to change the
+ *  The strict append only nature of an MMR makes it possible to change the
  *  tile_height at a later time in response to changing usage of the log.
- *  If desired historic tiles for the same log can be re-built using a new tile height without breaking verifiability.
- *
+ *  If desired, historic tiles for the same log can be re-built using a new tile
+ *  height without breaking verifiability of pre-existing log seals.
  */
 export interface ITileStorageProvider {
   /**  Reads the identified tile
@@ -53,7 +55,8 @@ export interface ITileStore {
   /** Retrieves the current head tile, creating a new one if the most recent is full
    * @returns {[ILeafAdder, number]} the leaf adder and the version (etag) of the tile
    */
-  head(): [ILeafAdder, number];
+  head(): [ILeafAdder, number|undefined];
+  get(id: number): [ILeafAdder, number|undefined];
 
   /** Creates a new tile, optionally extending an existing tile by propagating the ancsetor peaks.
    * The new tile is not committed to storage until the commit method is called.
@@ -63,5 +66,5 @@ export interface ITileStore {
   /** Attempts to commit the extended tile, underlying storage may reject this
    * based on optimistic consistency primitives.
    * @param {number} version an etag like version for the tile when it was read from storage */
-  commit(t: ILeafAccessor, version: number|undefined): void;
+  commit(t: INodeAccesosor, version: number|undefined): void;
 }

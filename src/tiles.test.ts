@@ -26,7 +26,7 @@ import { Numbers } from './numbers.js';
 
 const NUM_FIELD = (x:number)=> Numbers.toBE64(x, 32);
 
-describe('Tile', () => {
+describe("Tile's", () => {
   it('Should create a tile with the expected firstIndex', () => {
       const cfg = cfg_default({});
       const data = Buffer.alloc(cfg.maxTileDataSize);
@@ -81,7 +81,7 @@ describe('Tile', () => {
     // populate tile id 1
     for (let i = 3; i < 7; i++)
       set_node(t1.data, cfg, i-t1.firstIndex, i);
-    t1.lastIndex = 6;
+    t1.nextIndex = 7;
 
     // create tile id 2
     const t2 = Tile.create(cfg, t1);
@@ -92,7 +92,7 @@ describe('Tile', () => {
     // populate tile id 2
     for (let i = 7; i < 10; i++)
       set_node(t2.data, cfg, i-t2.firstIndex, i);
-    t2.lastIndex = 9;
+    t2.nextIndex = 10;
 
     // create tile id 3
     const t3 = Tile.create(cfg, t2);
@@ -105,7 +105,7 @@ describe('Tile', () => {
     // populate tile id 3
     for (let i = 10; i < 15; i++)
       set_node(t3.data, cfg, i-t3.firstIndex, i);
-    t3.lastIndex = 14;
+    t3.nextIndex = 15;
 
     // create tile id 4, this is a perfect peak and it resets the stack
     const t4 = Tile.create(cfg, t3);
@@ -116,7 +116,7 @@ describe('Tile', () => {
     // populate tile id 4
     for (let i = 15; i < 18; i++)
       set_node(t4.data, cfg, i-t4.firstIndex, i);
-    t4.lastIndex = 17;
+    t4.nextIndex = 18;
 
     const t5 = Tile.create(cfg, t4);
     expect(t5.ancestorPeaks[17]).toEqual(NUM_FIELD(17));
@@ -125,39 +125,38 @@ describe('Tile', () => {
     expect(get_peak(t5.data, 0, cfg)).toEqual(NUM_FIELD(14));
     expect(get_peak(t5.data, 1, cfg)).toEqual(NUM_FIELD(17));
   });	
+});
 
+describe('max_tile_size', () => {
+  it('Should calculate the correct max tile size for height 2 tiles 0', () => {
+    const cfg = cfg_default({tile_height: 1});
 
-  describe('max_tile_size', () => {
-    it('Should calculate the correct max tile size for height 2 tiles 0', () => {
-      const cfg = cfg_default({tile_height: 1});
+    const nodeCounts = [3, 4, 3, 5, 3, 4, 3, 6];
+    for (let i = 0; i < nodeCounts.length; i++) {
+      const tileSize = Tiles.max_tile_size(cfg, i);
+      const expectNodeSize = nodeCounts[i] * cfg.fieldWidth;
+      if (tileSize != cfg.nodesStart + expectNodeSize)
+        console.log(`tile ${i} size: ${tileSize} expected: ${cfg.nodesStart + expectNodeSize}`);
+      expect(tileSize).toEqual(cfg.nodesStart +  expectNodeSize);
+    }
+  });
 
-      const nodeCounts = [3, 4, 3, 5, 3, 4, 3, 6];
-      for (let i = 0; i < nodeCounts.length; i++) {
-        const tileSize = Tiles.max_tile_size(cfg, i);
-        const expectNodeSize = nodeCounts[i] * cfg.fieldWidth;
-        if (tileSize != cfg.nodesStart + expectNodeSize)
-          console.log(`tile ${i} size: ${tileSize} expected: ${cfg.nodesStart + expectNodeSize}`);
-        expect(tileSize).toEqual(cfg.nodesStart +  expectNodeSize);
-      }
-    });
+  it('Should calculate the correct max tile size for tileid 1', () => {
+    const cfg = cfg_default({tile_height: 2});
+    const tileSize = Tiles.max_tile_size(cfg, 1);
+    expect(tileSize).toBe(cfg.nodesStart + (mmr_index(cfg.leafCount * 2) - mmr_index(cfg.leafCount * 1)) * cfg.fieldWidth);
+  });
 
-    it('Should calculate the correct max tile size for tileid 1', () => {
-      const cfg = cfg_default({tile_height: 2});
-      const tileSize = Tiles.max_tile_size(cfg, 1);
-      expect(tileSize).toBe(cfg.nodesStart + (mmr_index(cfg.leafCount * 2) - mmr_index(cfg.leafCount * 1)) * cfg.fieldWidth);
-    });
+  it('Should calculate the correct max tile size for a larger tile height', () => {
+    const cfg = cfg_default({tile_height: 4});
+    const tileSize = Tiles.max_tile_size(cfg, 2);
+    expect(tileSize).toBe(cfg.nodesStart + (mmr_index(cfg.leafCount * 3) - mmr_index(cfg.leafCount * 2)) * cfg.fieldWidth);
+  });
 
-    it('Should calculate the correct max tile size for a larger tile height', () => {
-      const cfg = cfg_default({tile_height: 4});
-      const tileSize = Tiles.max_tile_size(cfg, 2);
-      expect(tileSize).toBe(cfg.nodesStart + (mmr_index(cfg.leafCount * 3) - mmr_index(cfg.leafCount * 2)) * cfg.fieldWidth);
-    });
-
-    it('Should handle edge cases with tileid 0 and minimum tile height', () => {
-      const cfg = cfg_default({tile_height: 1});
-      const tileSize = Tiles.max_tile_size(cfg, 0);
-      expect(tileSize).toBe(cfg.nodesStart + (mmr_index(cfg.leafCount * 1) - mmr_index(cfg.leafCount * 0)) * cfg.fieldWidth);
-    });
+  it('Should handle edge cases with tileid 0 and minimum tile height', () => {
+    const cfg = cfg_default({tile_height: 1});
+    const tileSize = Tiles.max_tile_size(cfg, 0);
+    expect(tileSize).toBe(cfg.nodesStart + (mmr_index(cfg.leafCount * 1) - mmr_index(cfg.leafCount * 0)) * cfg.fieldWidth);
   });
 });
 
@@ -181,11 +180,6 @@ function set_number(data: Buffer, base: number, index: number, value: number, si
   data.writeBigInt64BE(BigInt(value), base + (index+1)*size - 8);
 }
 
-/*
-function set_peak(data: Buffer, cfg: TileFormat, index: number, value: number) {
-  set_number(data, cfg.peaksStart, index, value, cfg.fieldWidth);
-}*/
-
 function set_node(data: Buffer, cfg: TileFormat, index: number, value: number) {
   set_number(data, cfg.nodesStart, index, value, cfg.fieldWidth);
 }
@@ -194,9 +188,6 @@ function get_field(data: Buffer, index: number, offset: number, size: number): B
   return data.subarray(offset + index*size, offset + (index+1)*size);
 }
 
-function get_node(data: Buffer, index: number, cfg: TileFormat): Buffer {
-  return get_field(data, index, cfg.nodesStart, cfg.fieldWidth);
-}
 function get_peak(data: Buffer, index: number, cfg: TileFormat): Buffer {
   return get_field(data, index, cfg.peaksStart, cfg.fieldWidth);
 }

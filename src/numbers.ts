@@ -1,5 +1,3 @@
-import { hex2Bytes } from "./hexbytes.js";
-
 // NOTICE: js ECM-262 5th edition permits all binary operators on number up to 2^53-1
 // The draft is defined for 2^64-1.
 export type Index = number;

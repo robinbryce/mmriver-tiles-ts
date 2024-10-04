@@ -1,13 +1,24 @@
 // The algorithms corresponding to the MMRIVER draft
 
 import { ILeafAdder, Hasher } from "./interfaces.js";
-import { LogField } from "./logvalue.js";
 import { Index } from "./numbers.js";
 import { concat_bytes } from "./bytes.js"
 import { Numbers } from "./numbers.js";
 
-
-export function add_leaf_hash(db: ILeafAdder, hasher: Hasher, f: LogField): Index {
+/**
+ * Adds the leaf hash value f to the MMR
+ * 
+ * Interior nodes are appended by this algorithm as necessary to for a complete mmr.
+ * 
+ * @param db an interface providing the required append and get methods.
+ *    `db.append` must return the index for the next item to be added, and make the
+ *     value added available to subsequent get calls in the same invocation.
+ *     `db.get` must return the requested value or raise an exception.
+ * @param hasher a function that hashes a byte array and returns a byte array
+ * @param f the hash sized leaf value to add to the MMR
+ * @returns 
+ */
+export function add_leaf_hash(db: ILeafAdder, hasher: Hasher, f: Uint8Array): Index {
     let g = 0;
     let i:Index = db.append(f);
 
@@ -20,9 +31,180 @@ export function add_leaf_hash(db: ILeafAdder, hasher: Hasher, f: LogField): Inde
     }
 
     return i;
-
 }
 
+/**
+ * Returns the list of node indices whose values prove the inclusion of node i,
+ * in the complete MMR, containing i, whose last index is c + 1.
+ * 
+ * Note that where i < c0; c0 < c1; the following hold, and are the basis of proofs of consistency.
+ * 
+ *   path_c0 = inclusion_proof_path(i, c0);
+ *   path_c1 = inclusion_proof_path(parent(last_item(path[c])]), c1);
+ *   inclusion_proof_path(i, c1) == [...path_c0, ...path_c1]
+ * 
+ * @param i The index of the node to whose inclusion path is required.
+ * @param c The index of the last node of any complete MMR that contains i.
+ * @returns The inclusion path of i with respect to c
+ */
+export function inclusion_proof_path(i: Index, c: Index): Index[] {
+  // set the path to the empty list
+  const path: Index[] = [];
+
+  // Set `g` to `index_height(i)`
+  let g = index_height(i)
+
+  // Repeat until #termination_condition evaluates true
+  let isibling: Index
+  while (true) {
+
+    // Set `siblingoffset` to 2^(g+1)
+    let siblingoffset = (2 << g)
+
+    // If `index_height(i+1)` is greater than `g`
+    if (index_height(i+1) > g) {
+
+      // Set isibling to `i - siblingoffset + 1`. because i is the right
+      // sibling, its witness is the left which is offset behind.
+      isibling = i - siblingoffset + 1
+
+      // Set `i` to `i+1`. the parent of a right sibling is always
+      // stored immediately after.
+      i += 1
+    } else {
+
+        // Set isibling to `i + siblingoffset - 1`. because i is the left
+        // sibling, its witness is the right and is offset ahead.
+        isibling = i + siblingoffset - 1
+
+        // Set `i` to `i+siblingoffset`. the parent of a left sibling is
+        // stored at 1 position ahead of the right sibling.
+        i += siblingoffset
+    }
+
+    // If `isibling` is greater than `ix`, return the collected path. this is
+    // the #termination_condition
+    if (isibling > c)
+        return path;
+
+    // Append isibling to the proof.
+    path.push(isibling)
+    // Increment the height index `g`.
+    g += 1
+  }
+
+  return path;
+}
+
+/**
+ * Apply the proof to value to produce the implied root
+ * 
+ * Note that any MMR node can be proven, leaves and interiors alike.
+ * 
+ * For a valid cose receipt of inclusion, using the returned root as the
+ * detached payload will result in a receipt message whose signature can be
+ * verified.
+ *
+ * @param hasher - applies the configured hash
+ * @param i - the mmr index of the node to be proven
+ * @param value - the value of the node to be proven
+ * @param proof - the list of sibling nodes required to prove the inclusion of the node
+ * @returns the root hash produced for value using the proof
+ */
+export function included_root(
+  hasher: Hasher, i: Index, value: Uint8Array, proof: Uint8Array[]): Uint8Array {
+
+  // set `root` to the value whose inclusion is to be proven
+  let root = value;
+
+  // set g to the zero based height of i, this allows for interior node proofs
+  // and hence proofs of consistency based on inclusion proofs.
+  let g = index_height(i);
+
+  // for each sibling in the proof
+  for (const sibling of proof) {
+    // if the height of the entry immediately after i is greater than g, then
+    // i is a right child.
+    if (index_height(i + 1) > g) {
+        // advance i to the parent. As i is a right child, the parent is at `i+1`
+        i = i + 1;
+        // Set `root` to `H(i+1 || sibling || root)` (we hash the positions)
+        root = hash_pos_pair64(hasher, i+1, sibling, root);
+    } else {
+        // Advance i to the parent. As i is a left child, the parent is at `i + (2^(g+1))`
+        i = i + (2 << g);
+        // Set `root` to `H(i+1 || root || sibling)`
+        root = hash_pos_pair64(hasher, i+1, root, sibling);
+    }
+
+    // Set g to the height index above the current
+    g = g + 1;
+  }
+  // Return the hash produced. If the path length was zero, the original nodehash is returned
+  return root
+}
+
+/**
+ * Returns the proof paths showing consistency between the MMR's identified by ifrom and ito.
+ * 
+ *  The proof is an inclusion path for each peak in MMR(ifrom) in MMR(ito)
+ * 
+ * @param ifrom 
+ * @param ito 
+ */
+export function consistency_proof_paths(ifrom: Index, ito: Index): Index[][] {
+  const frompeaks = peaks(ifrom);
+  const proof: Index[][] = [];
+  for (const ipeak of frompeaks)
+    proof.push(inclusion_proof_path(ipeak, ito));
+  return proof;
+}
+
+/**
+ * Apply the inclusion paths for each origin accumulator peak
+ * The returned list will be a descending height ordered list of elements from
+ * the accumulator for the consistent future state. It may be *exactly* the
+ * future accumulator or it may be a prefix of it.
+ *
+ * For a valid COSE Receipt of consistency, using the returned array as the
+ * detached payload will result in a receipt message whose signature can be
+ * verified.
+ *
+ * @param ifrom 
+ * @param accumulatorfrom 
+ * @param proofs 
+ */
+export function consistent_roots(
+  hasher: Hasher,
+  ifrom: Index,
+  accumulatorfrom: Uint8Array[],
+  proofs: Uint8Array[][],
+): Uint8Array[] {
+    // It is an error if the lengths of frompeaks, paths and accumulatorfrom are not all equal.
+    const frompeaks = peaks(ifrom)
+    if (frompeaks.length != accumulatorfrom.length)
+      throw new Error(`accumulator has invalid length for index ifrom`)
+    if (frompeaks.length != proofs.length)
+      throw new Error(`incorrect proof count for the provided accumulator`)
+
+    const roots: Uint8Array[] = [];
+    for (let i = 0; i < accumulatorfrom.length; i++) {
+      const root = included_root(hasher, frompeaks[i], accumulatorfrom[i], proofs[i]);
+      // Many peaks from the old accumulator may be under the same parent in the
+      // new accumulator.
+      if (roots.length && bytes_equal(roots[roots.length - 1], root))
+        continue;
+      roots.push(root);
+    }
+
+    return roots
+}
+
+/*
+ * Essential supporting algorithms
+ */
+
+/**Returns the 0 based height of the MMR index i */
 export function index_height(i: Index): number {
   let pos = i + 1
   while (!all_ones(pos)) {
@@ -32,6 +214,7 @@ export function index_height(i: Index): number {
   return bit_length(pos) - 1
 }
 
+/**Returns the peak indices for MMR(i) in highest to lowest order */
 export function peaks(i: Index): Index[] {
   let peak = 0;
   const peaks: Index[] = [];
@@ -47,6 +230,72 @@ export function peaks(i: Index): Index[] {
 
   return peaks;
 }
+
+/** Returns the interior parent node value for the node with *position* pos,
+ * whose children are left, right
+ * This commits the position of the the parent in the mmr to it's hash
+ */
+export function hash_pos_pair64(
+  hasher: Hasher, pos: Index, left: Uint8Array, right: Uint8Array): Uint8Array {
+  return hasher(concat_bytes(Numbers.toBE64(pos),left, right));
+}
+
+/* 
+ * Byte and binary primitives for the essential algorithms
+ */ 
+
+export function bytes_equal(a: Uint8Array, b: Uint8Array): boolean {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+// Returns true if all bits, starting with the most significant, are 1
+export function all_ones(pos: Index): boolean {
+  const imsb = bit_length(pos) - 1
+  const mask = (1 << (imsb+1)) - 1
+  return pos === mask
+}
+
+// returns the number of bits set in the integer x (popcnt is webassembly only)
+export function ones(x: Index): number {
+  let count = 0;
+  while (x !== 0) {
+    count += x & 1;
+    x >>= 1;
+  }
+  return count;
+}
+
+// returns the number of trailing zeros in the integer x,
+// WARNING: this function is not defined for x > 2^32 -1
+export function trailing_zeros64(x: Index): number {
+  if (x < 0 || x > Math.pow(2, 32) - 1) {
+    throw new RangeError('Input must be a positive integer within the range of a JavaScript safe integer (0 to 2^53 - 1)');
+  }
+  if (x === 0)
+    return 64;
+
+  return 31 - Math.clz32(x & -x);
+}
+
+export function most_sig_bit(x: Index): Index {
+  return 1 << (bit_length(x) - 1);
+}
+
+// Returns the number of bits required to represent the integer x
+export function bit_length(x: Index): number {
+  if (x === 0) {
+    return 0;
+  }
+  return log2_floor(x) + 1;
+}
+
+export function log2_floor(x: number): number {
+  return Math.floor(Math.log2(x));
+}
+
+/*
+ * Complimentary algorithms required by typical implementations
+ */
 
 /**
  * Returns the count of leaf elements in MMR(i)
@@ -101,23 +350,12 @@ export function height_leaft(i: Index): Index {
   return bit_length(i) - 1
 }
 
-/*
-def mmr_index(e: int) -> int:
-    """Returns the node index for the leaf `e`
-
-    Args:
-        e - the leaf index, where the leaves are numbered consecutively, ignoring interior nodes
-    Returns:
-        The mmr index `i` for the element `e`
-    """
-    sum = 0
-    while e > 0:
-        h = e.bit_length()
-        sum += (1 << h) - 1
-        half = 1 << (h - 1)
-        e -= half
-    return sum
-*/
+/**
+ * Returns the first complete mmr index which contains i
+ * A complete mmr index is defined as the first left sibling node above or equal to i.
+ * @param i an mmr index
+ * @returns a complete mmr index, if i is complete i is returned.
+ */
 export function complete_mmr(i: Index): Index {
 	let h0 = index_height(i)
 	let h1 = index_height(i + 1)
@@ -128,58 +366,5 @@ export function complete_mmr(i: Index): Index {
 	}
 
 	return i
-}
-
-export function hash_pos_pair64(hasher: Hasher, i: Index, left: LogField, right: LogField): LogField {
-  return hasher(concat_bytes(Numbers.toBE64(i),left, right)) as LogField;
-}
-
-// 
-// Binary primitives for the essential algorithms
-// 
-
-// Returns true if all bits, starting with the most significant, are 1
-export function all_ones(pos: Index): boolean {
-  const imsb = bit_length(pos) - 1
-  const mask = (1 << (imsb+1)) - 1
-  return pos === mask
-}
-
-// returns the number of bits set in the integer x (popcnt is webassembly only)
-export function ones(x: Index): number {
-  let count = 0;
-  while (x !== 0) {
-    count += x & 1;
-    x >>= 1;
-  }
-  return count;
-}
-
-// returns the number of trailing zeros in the integer x,
-// WARNING: this function is not defined for x > 2^32 -1
-export function trailing_zeros64(x: Index): number {
-  if (x < 0 || x > Math.pow(2, 32) - 1) {
-    throw new RangeError('Input must be a positive integer within the range of a JavaScript safe integer (0 to 2^53 - 1)');
-  }
-  if (x === 0)
-    return 64;
-
-  return 31 - Math.clz32(x & -x);
-}
-
-export function most_sig_bit(x: Index): Index {
-  return 1 << (bit_length(x) - 1);
-}
-
-// Returns the number of bits required to represent the integer x
-export function bit_length(x: Index): number {
-  if (x === 0) {
-    return 0;
-  }
-  return log2_floor(x) + 1;
-}
-
-export function log2_floor(x: number): number {
-  return Math.floor(Math.log2(x));
 }
 
